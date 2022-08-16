@@ -1,15 +1,2 @@
-[package]
-name = "tlvc"
-version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-crc = "3.0"
-zerocopy = "0.6"
-byteorder = {version = "1.4", default-features = false}
-
-[features]
-default = []
-std = []
+[workspace]
+members = ["tlvc", "tool"]
