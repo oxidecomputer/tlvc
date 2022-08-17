@@ -1,8 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 use zerocopy::AsBytes;
-
-mod text;
+use tlvc_text::Piece;
 
 #[derive(Parser)]
 struct Tool {
@@ -25,7 +24,7 @@ fn main() {
     let args = Tool::from_args();
     match args.cmd {
         Cmd::Pack { input, output } => {
-            let p = text::load(std::fs::File::open(input).unwrap()).unwrap();
+            let p = tlvc_text::load(std::fs::File::open(input).unwrap()).unwrap();
 
             let mut bytes = vec![];
             for piece in p {
@@ -37,16 +36,16 @@ fn main() {
         Cmd::Dump { input } => {
             let bytes = std::fs::read(input).unwrap();
             let pieces = dump(tlvc::TlvcReader::begin(&bytes[..]).unwrap());
-            text::save(std::io::stdout(), &pieces).unwrap();
+            tlvc_text::save(std::io::stdout(), &pieces).unwrap();
             println!();
         }
     }
 }
 
-fn pack(piece: &text::Piece) -> Vec<u8> {
+fn pack(piece: &Piece) -> Vec<u8> {
     match piece {
-        text::Piece::Bytes(b) => b.to_vec(),
-        text::Piece::Chunk(tag, body) => {
+        Piece::Bytes(b) => b.to_vec(),
+        Piece::Chunk(tag, body) => {
             let mut out = vec![];
 
             let mut header = tlvc::ChunkHeader {
@@ -81,7 +80,7 @@ fn pack(piece: &text::Piece) -> Vec<u8> {
     }
 }
 
-fn dump<R>(mut src: tlvc::TlvcReader<R>) -> Vec<text::Piece>
+fn dump<R>(mut src: tlvc::TlvcReader<R>) -> Vec<Piece>
     where R: tlvc::TlvcRead,
 {
     let mut pieces = vec![];
@@ -90,18 +89,18 @@ fn dump<R>(mut src: tlvc::TlvcReader<R>) -> Vec<text::Piece>
             Ok(Some(chunk)) => {
                 let mut tmp = [0; 512];
                 if chunk.check_body_checksum(&mut tmp).is_ok() {
-                    pieces.push(text::Piece::Chunk(
-                        text::Tag::new(chunk.header().tag),
+                    pieces.push(Piece::Chunk(
+                        tlvc_text::Tag::new(chunk.header().tag),
                         dump(chunk.read_as_chunks()),
                     ));
                 } else {
-                    pieces.push(text::Piece::Bytes(remaining_bytes(src, chunk.header().total_len_in_bytes())));
+                    pieces.push(Piece::Bytes(remaining_bytes(src, chunk.header().total_len_in_bytes())));
                     break;
                 }
             }
             Ok(None) => break,
             Err(_) => {
-                pieces.push(text::Piece::Bytes(remaining_bytes(src, 0)));
+                pieces.push(Piece::Bytes(remaining_bytes(src, 0)));
                 break;
             },
         }

@@ -1,4 +1,4 @@
-#![cfg_attr(not(any(test, feature = "std")), no_std)]
+#![cfg_attr(not(test), no_std)]
 
 use zerocopy::{AsBytes, FromBytes};
 use core::mem::size_of;
@@ -7,7 +7,7 @@ pub type U32LE = zerocopy::U32<byteorder::LittleEndian>;
 
 pub const HEADER_MAGIC: u32 = 0x6b32_9f69;
 
-const fn header_checksum(tag: [u8; 4], len: u32) -> u32 {
+pub const fn header_checksum(tag: [u8; 4], len: u32) -> u32 {
     u32::from_le_bytes(tag).wrapping_mul(HEADER_MAGIC).wrapping_add(len)
 }
 
@@ -50,7 +50,7 @@ impl TlvcRead for &'_ [u8] {
     }
 }
 
-#[cfg(any(feature = "std", test))]
+#[cfg(any(feature = "alloc", test))]
 impl TlvcRead for std::sync::Arc<[u8]> {
     fn extent(&self) -> Result<u64, TlvcReadError> {
         (&**self).extent()
@@ -444,5 +444,4 @@ mod tests {
 
         assert_eq!(r.remaining(), 0, "skipping chunk should exhaust reader");
     }
-
 }

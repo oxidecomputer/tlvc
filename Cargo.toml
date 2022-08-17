@@ -1,2 +1,2 @@
 [workspace]
-members = ["tlvc", "tool"]
+members = ["tlvc", "tool", "text"]
