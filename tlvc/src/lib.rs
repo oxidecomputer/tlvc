@@ -1,42 +1,67 @@
+//! Implementation of the TLV-C data structure.
+
 #![cfg_attr(not(test), no_std)]
 
 use zerocopy::{AsBytes, FromBytes};
 use core::mem::size_of;
 
+/// Shorthand type for little-endian `u32` used in the chunk header.
 pub type U32LE = zerocopy::U32<byteorder::LittleEndian>;
 
+/// Magic number used to compute the header checksum.
 pub const HEADER_MAGIC: u32 = 0x6b32_9f69;
 
+/// Computes the header checksum corresponding to a 4-byte tag and body length.
 pub const fn header_checksum(tag: [u8; 4], len: u32) -> u32 {
-    u32::from_le_bytes(tag).wrapping_mul(HEADER_MAGIC).wrapping_add(len)
+    !u32::from_le_bytes(tag).wrapping_mul(HEADER_MAGIC).wrapping_add(len)
 }
 
+/// Layout of fields in a chunk header.
+///
+/// While the fields are expected to be 4-byte-aligned in the storage medium, we
+/// _don't_ require them to be aligned in local memory, so this uses the
+/// unaligned and explicitly little-endian version of `u32`.
 #[derive(Copy, Clone, Debug, Default, AsBytes, FromBytes, zerocopy::Unaligned)]
 #[repr(C)]
 pub struct ChunkHeader {
+    /// Identifier describing the chunk. Must be valid UTF-8.
     pub tag: [u8; 4],
+    /// Number of bytes in the chunk body.
     pub len: U32LE,
+    /// Checksum of the above two fields, computed using the `header_checksum`
+    /// algorithm.
     pub header_checksum: U32LE,
 }
 
 impl ChunkHeader {
+    /// Compute the correct checksum for the header tag and length, independent
+    /// of the currently recorded checksum.
     pub fn compute_checksum(&self) -> u32 {
         header_checksum(self.tag, self.len.get())
     }
 
+    /// Compute the length of this chunk in bytes, including the header,
+    /// body, any padding, and the trailing checksum.
     pub fn total_len_in_bytes(&self) -> usize {
         size_of::<Self>()
-            + self.len.get() as usize
+            + round_up_usize(self.len.get() as usize)
             + 4
     }
 }
 
-
+/// Trait implemented by types that can serve as a source of TLV-C data. This is
+/// a limited version of `std::io::Read` that can be used in a `no_std`
+/// environment.
+///
+/// For ergonomics reasons, we require that implementations of `TlvcRead` also
+/// implement `Clone`. The easiest way to do this is to implement `TlvcRead` for
+/// a _reference_ to the backing store, e.g. `&MyType`.
 pub trait TlvcRead: Clone {
     fn extent(&self) -> Result<u64, TlvcReadError>;
     fn read_exact(&self, offset: u64, dest: &mut [u8]) -> Result<(), TlvcReadError>;
 }
 
+/// Implementation of `TlvcRead` for a simple in-memory byte slice.
 impl TlvcRead for &'_ [u8] {
     fn extent(&self) -> Result<u64, TlvcReadError> {
         Ok(u64::try_from(self.len()).unwrap())
@@ -50,6 +75,8 @@ impl TlvcRead for &'_ [u8] {
     }
 }
 
+/// Implementation of `TlvcRead` for `Arc<[u8]>`. We implement this for `Arc`
+/// instead of `Vec` because `Arc` can be cheaply (shallowly) cloned.
 #[cfg(any(feature = "alloc", test))]
 impl TlvcRead for std::sync::Arc<[u8]> {
     fn extent(&self) -> Result<u64, TlvcReadError> {
@@ -61,20 +88,24 @@ impl TlvcRead for std::sync::Arc<[u8]> {
     }
 }
 
+/// Errors that can occur during the read process.
 #[derive(Copy, Clone, Debug)]
 pub enum TlvcReadError {
-
+    /// A header was found with the wrong checksum.
     HeaderCorrupt {
         stored_checksum: u32,
         computed_checksum: u32,
     },
+    /// A chunk body didn't match its checksum.
     BodyCorrupt {
         stored_checksum: u32,
         computed_checksum: u32,
     },
+    /// A chunk would extend past the end of the medium.
     Truncated,
 }
 
+/// Pulls data from a `TlvcRead` implementation and parses it as TLV-C.
 #[derive(Clone)]
 pub struct TlvcReader<R> {
     source: R,
@@ -83,6 +114,8 @@ pub struct TlvcReader<R> {
 }
 
 impl<R: TlvcRead> TlvcReader<R> {
+    /// Starts a reader at the beginning of `source` and covering the whole
+    /// extent of the medium.
     pub fn begin(source: R) -> Result<Self, TlvcReadError> {
         let limit = source.extent()?;
         Ok(Self {
@@ -92,17 +125,39 @@ impl<R: TlvcRead> TlvcReader<R> {
         })
     }
 
+    /// Returns the number of bytes remaining in this reader.
     pub fn remaining(&self) -> u64 {
         self.limit - self.position
     }
 
+    /// Destroys this reader and returns the original `source`, the byte
+    /// position of the reader at the time of its destruction, and the byte
+    /// offset of the reader's limit. (This will be the end of the medium for
+    /// readers created directly from `source`, or a point within for
+    /// sub-readers produced by `read_as_chunks`.)
     pub fn into_inner(self) -> (R, u64, u64) {
         (self.source, self.position, self.limit)
     }
 
-    pub fn next(&mut self) -> Result<Option<ChunkHandle<R>>, TlvcReadError>
-        where R: Clone,
-    {
+    /// Attempts to parse a chunk and return a handle to it.
+    ///
+    /// This has three possible outcomes:
+    ///
+    /// 1. `Ok(Some(chunk))` - a chunk header was successfully parsed, and
+    ///    describes a chunk that doesn't extend past the end of the medium.
+    ///    This implies that the header checksum was validated, but does _not_
+    ///    validate the body checksum, since that may require significant
+    ///    amounts of I/O.
+    ///
+    /// 2. `Ok(None)` - this reader is at the end of its backing store.
+    ///
+    /// 3. `Err(e)` - data is available from the backing store, but it doesn't
+    ///    validate as a chunk header, or would extend past the end.
+    ///
+    /// In the first case, and only the first case, this reader's position is
+    /// bumped past the end of the successfully parsed chunk. This means the
+    /// next call to `next` will attempt to return a different chunk.
+    pub fn next(&mut self) -> Result<Option<ChunkHandle<R>>, TlvcReadError> {
         if self.position == self.limit {
             return Ok(None);
         }
@@ -124,6 +179,14 @@ impl<R: TlvcRead> TlvcReader<R> {
         }))
     }
 
+    /// Reads data from the backing store and attempts to validate it as a chunk
+    /// header.
+    ///
+    /// This is an implementation factor of `next`, provided for your
+    /// convenience. It checks the header _only._ It does not check that the
+    /// chunk _body_ is within the backing store, or the body checksum.
+    ///
+    /// You almost certainly want to call `next` instead.
     pub fn read_header(&self) -> Result<ChunkHeader, TlvcReadError> {
         // Check that our invariant is maintained.
         debug_assert!(self.is_word_aligned());
@@ -191,16 +254,9 @@ impl<R: TlvcRead> TlvcReader<R> {
 /// You can access the chunk header with `header()` and access the body contents
 /// with various other functions.
 ///
-/// While you are holding a `ChunkHandle` the `TlvcReader` that produced it is
-/// borrowed and cannot be used. This means you can use operations on the
-/// `ChunkHandle` to change the `TlvcReader`'s state:
-///
-/// - Dispose of the handle using `ChunkHandle::skip` to bump the reader's
-///   position to the end of the chunk. This is guaranteed to succeed because of
-///   property 3 above.
-/// - Simply drop the `ChunkHandle`. This will leave the reader's state
-///   unchanged, and you can read the same chunk again or use operations on the
-///   reader to seek around.
+/// The `ChunkHandle` holds a cloned reference to the `TlvcReader`'s backing
+/// data store, _not_ a reference to the `TlvcReader` itself -- so you can have
+/// multiple chunk handles outstanding.
 pub struct ChunkHandle<R> {
     source: R,
     header: ChunkHeader,
@@ -208,10 +264,12 @@ pub struct ChunkHandle<R> {
 }
 
 impl<R> ChunkHandle<R> {
+    /// Returns a reference to the raw chunk header.
     pub fn header(&self) -> &ChunkHeader {
         &self.header
     }
 
+    /// Returns the length of the body in bytes.
     pub fn len(&self) -> u64 {
         u64::from(self.header.len.get())
     }
@@ -241,7 +299,7 @@ impl<R> ChunkHandle<R> {
     /// `read_as_chunks`. Note that this will (unavoidably) result in duplicate
     /// reads.
     pub fn read_as_chunks(&self) -> TlvcReader<R>
-        where R: Clone,
+        where R: TlvcRead,
     {
         TlvcReader {
             source: self.source.clone(),
@@ -285,10 +343,14 @@ impl<R> ChunkHandle<R> {
     }
 }
 
+/// Produces a `crc::Crc` that implements the polynomial used for body contents
+/// checksums.
 pub const fn begin_body_crc() -> crc::Crc<u32> {
     crc::Crc::<u32>::new(&crc::CRC_32_ISCSI)
 }
 
+/// Utility for computing the body contents checksum for a block of data held
+/// entirely in RAM.
 pub fn compute_body_crc(data: &[u8]) -> u32 {
     let c = begin_body_crc();
     let mut c = c.digest();
@@ -300,6 +362,9 @@ fn round_up(x: u64) -> u64 {
     (x + 0b11) & !0b11
 }
 
+fn round_up_usize(x: usize) -> usize {
+    (x + 0b11) & !0b11
+}
 
 #[cfg(test)]
 mod tests {
