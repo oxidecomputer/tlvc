@@ -1,0 +1,147 @@
+# TLV-C: Tag - Length - Value - Checksum
+
+TLV-C is a variant on the traditional [TLV] format that adds a whole mess of
+checksums and whatnot. Why, you ask?
+
+1. To support checking integrity of randomly accessed bits of data within a
+   nested TLV-C structure, without necessarily needing to read the whole thing.
+   (TLV itself provides no integrity checking.)
+2. To enable basic structural traversal of a structure without needing to
+   understand the type tags. (TLV can only be interpreted with reference to the
+   definition of each type tag, making a general pretty-printer, for example,
+   difficult.)
+
+## The format
+
+TLV-C is stored as a blob of bytes. What it's stored _in_ can vary -- a file on
+a disk, an I2C EEPROM, mercury delay lines, etc. Regardless of the storage media
+the format is the same.
+
+### Chunks
+
+TLV-C content consists of a sequence of (zero or more) _chunks._ Each chunk is
+marked with
+
+- A tag, distinguishing a particular chunk from other kinds of chunks,
+- A length, giving the number of bytes in the body (below),
+- A header checksum, computed over the previous two fields,
+- A body, containing zero or more bytes of data, and
+- A body checksum, computed over the body contents.
+
+Now to walk through those fields in more detail.
+
+**Tag.** A chunk's _tag_ is a four-byte field used to indicate how the contents
+of the chunk should be interpreted. In TLV, tags are often chosen to be
+four-character ASCII strings, so that the chunk can be mnemonic to both humans
+_and_ computers, and we continue this tradition -- except for consistency the
+field is encoded as UTF-8. Any four-byte UTF-8 string can be a tag. If you want
+a chunk tag that encodes to fewer than four bytes (like, say, `"HI"`), pad it
+with NUL or spaces and include the padding in your tag/format definition.
+
+**Length.** The _length_ gives the number of bytes in the body, encoded as a
+32-bit little-endian unsigned integer. This helps a reader know how far to skip
+to ignore the chunk, or to find the body checksum (below). Note that the body
+itself is padded to a multiple of four bytes, but that padding _is not_ included
+in the length.
+
+**Header Checksum.** The header checksum is computed over the tag and length
+fields. It is separate from the body checksum so that a header can be quickly
+integrity-checked (or distinguished from random data) without having to read the
+entire body, which could be large. For efficient implementation on modern
+microcontrollers, the header checksum is a simple integer multiply-accumulate
+expression over the tag (interpreted as an unsigned 32-bit integer) and the
+length:
+
+`header_checksum = complement(tag_as_u32 * 0x6b32_9f69 + length)`
+
+...where the magic number is a randomly selected 32-bit prime, and the result is
+bitwise-complemented to ensure that zeros don't hash to zero.
+
+**Body.** The body consists of zero or more bytes (as determined by the length
+field), plus padding if required to make it a multiple of four bytes in length.
+The body contents can be arbitrary, and their interpretation is subject to the
+type tag and any associated specification. However, it is common to _nest_ TLV-C
+structures, so the APIs provide utility routines for interpreting body contents
+as TLV-C. We can do this without knowledge of the type tag / specification by
+checking the checksums, to (probabilistically) distinguish TLV-C from random
+data.
+
+**Body checksum.** The body checksum follows the body (and any padding), and is
+a 32-bit little-endian integer. It is computed using CRC-32 over the body
+(_excluding_ the padding) using the iSCSI polynomial. We selected this
+polynomial to have decent error detection over smallish Hamming distances for
+our expected chunk sizes, which are on the order of 10 kiB.
+
+### Concatenating chunks
+
+A single chunk is a valid TLV-C structure. Any _concatenation_ of chunks, with
+no intervening non-chunk data, is also a valid TLV-C structure. A particular
+application of TLV-C could expect a single chunk to be found on a medium, or
+could continue seeking and reading chunks until it runs out.
+
+Given a TLV-C structure followed by non-TLV-C noise -- such as zero fill, erased
+Flash reading as `0xFF`, or random data -- a reader can _probabilistically_
+determine the end of the valid TLV-C sequence by stopping when a "header"
+without a valid checksum is found. One caveat here is if TLV-C data is written
+over existing TLV-C, e.g. when rewriting an EEPROM; in this case, a valid TLV-C
+chunk from the previous data may follow the new data and be interpreted along
+with it. To avoid this case, terminate any TLV-C structure with an invalid
+header; the easiest invalid header is a sequence of 12 `0x00` bytes.
+
+### Nesting chunks
+
+As noted above, it's common for the body contents of a chunk to be more TLV-C
+data. In this case, we wind up with bytes being covered by multiple checksums:
+
+- The container's body checksum covers the entire body.
+- The header checksum of a chunk in the body redundantly covers the header.
+- The body checksums of chunks in the body redundantly cover their portion of
+  the body contents.
+- And so forth recursively.
+
+This makes the data more difficult to _generate_, but is a deliberate concession
+to making it easy to _process._ It's possible to integrity check an
+arbitrarily-complex nested TLV-C structure by only examining the top-level
+header and body checksums, and reading its contents in one pass. On the other
+hand, it's also possible to perform integrity checks of deeply nested data, by
+inspecting header checksums while traversing the nested structure, and then the
+final body checksum covering the data in question.
+
+## Text format
+
+The `tlvctool` program uses a text format to make it easier to write and view
+TLV-C content. In this format, the data structure is described in UTF-8 text
+using the following notation for a chunk:
+
+`("atag", [ body contents ])`
+
+Body contents can be arbitrary sequences of bytes (written in square brackets)
+or more chunks. For instance, a chunk with tag `"BARC"` and seven bytes of body
+content would be written as
+
+`("BARC", [ [8, 6, 7, 5, 3, 0, 9] ])`
+
+whereas the same chunk containing a nested "FOOB" chunk with the same body
+contents, followed by an empty "QUUX" chunk, would be written as
+
+```
+("BARC", [
+    ("FOOB", [ [8, 6, 7, 5, 3, 0, 9] ]),
+    ("QUUX", []),
+])
+```
+
+In this format, the body of a chunk can alternate freely between chunks and
+arbitrary sequences of bytes, which is useful for describing complex formats, or
+for writing test fixtures that include chunks with invalid checksums. (Since
+checksums are implicit in the text format, you can't otherwise express an
+invalid checksum.)
+
+Whitespace and newlines are insignificant, trailing commas in square-bracket
+lists can be included or omitted, hex and binary are available with the `0x` and
+`0b` prefixes, and comments in both `// C++ style` and `/* C style */` are
+accepted.
+
+This format happens to be valid RON.
+
+
