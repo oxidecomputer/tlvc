@@ -81,6 +81,7 @@ fn pack(piece: &Piece) -> Vec<u8> {
             out[..std::mem::size_of::<tlvc::ChunkHeader>()].copy_from_slice(header.as_bytes());
             out
         }
+        Piece::String(s) => s.as_bytes().to_vec(),
     }
 }
 
