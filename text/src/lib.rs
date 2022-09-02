@@ -22,6 +22,7 @@ pub fn save(output: impl io::Write, pieces: &[Piece]) -> io::Result<()> {
 pub enum Piece {
     Chunk(Tag, Vec<Piece>),
     Bytes(Vec<u8>),
+    String(String),
 }
 
 impl Piece {
@@ -47,6 +48,7 @@ impl Piece {
                 let hcheck = tlvc::header_checksum(tag.0, child_len);
                 out[hcheck_pos..hcheck_pos + 4].copy_from_slice(&hcheck.to_le_bytes());
             }
+            Self::String(str) => out.extend(str.as_bytes()),
         }
     }
 }
