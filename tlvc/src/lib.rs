@@ -6,8 +6,8 @@
 
 #![cfg_attr(not(test), no_std)]
 
-use zerocopy::{AsBytes, FromBytes};
 use core::mem::size_of;
+use zerocopy::{AsBytes, FromBytes};
 
 /// Shorthand type for little-endian `u32` used in the chunk header.
 pub type U32LE = zerocopy::U32<byteorder::LittleEndian>;
@@ -17,7 +17,9 @@ pub const HEADER_MAGIC: u32 = 0x6b32_9f69;
 
 /// Computes the header checksum corresponding to a 4-byte tag and body length.
 pub const fn header_checksum(tag: [u8; 4], len: u32) -> u32 {
-    !u32::from_le_bytes(tag).wrapping_mul(HEADER_MAGIC).wrapping_add(len)
+    !u32::from_le_bytes(tag)
+        .wrapping_mul(HEADER_MAGIC)
+        .wrapping_add(len)
 }
 
 /// Layout of fields in a chunk header.
@@ -47,9 +49,7 @@ impl ChunkHeader {
     /// Compute the length of this chunk in bytes, including the header,
     /// body, any padding, and the trailing checksum.
     pub fn total_len_in_bytes(&self) -> usize {
-        size_of::<Self>()
-            + round_up_usize(self.len.get() as usize)
-            + 4
+        size_of::<Self>() + round_up_usize(self.len.get() as usize) + 4
     }
 }
 
@@ -196,7 +196,9 @@ impl<R: TlvcRead> TlvcReader<R> {
         debug_assert!(self.is_word_aligned());
 
         // See if this access would require us to go off the end of our region.
-        let header_end = self.position.checked_add(size_of::<ChunkHeader>() as u64)
+        let header_end = self
+            .position
+            .checked_add(size_of::<ChunkHeader>() as u64)
             .ok_or(TlvcReadError::Truncated)?;
         if header_end > self.limit {
             return Err(TlvcReadError::Truncated);
@@ -204,7 +206,8 @@ impl<R: TlvcRead> TlvcReader<R> {
 
         // Great! Read the actual bytes.
         let mut header = ChunkHeader::default();
-        self.source.read_exact(self.position, header.as_bytes_mut())?;
+        self.source
+            .read_exact(self.position, header.as_bytes_mut())?;
 
         // Finally, check the header's local checksum to try and distinguish
         // this from total nonsense.
@@ -230,7 +233,10 @@ impl<R: TlvcRead> TlvcReader<R> {
 
         // Bump our new position forward as long as it doesn't cross our limit.
         // This may leave us zero-length. That's ok.
-        let p = self.position.checked_add(size).ok_or(TlvcReadError::Truncated)?;
+        let p = self
+            .position
+            .checked_add(size)
+            .ok_or(TlvcReadError::Truncated)?;
 
         if p > self.limit {
             return Err(TlvcReadError::Truncated);
@@ -278,12 +284,19 @@ impl<R> ChunkHandle<R> {
         u64::from(self.header.len.get())
     }
 
+    /// Checks whether the body is empty
+    pub fn is_empty(&self) -> bool {
+        self.header.len.get() == 0
+    }
+
     /// Reads bytes from the chunk body without interpreting them. Note that
     /// this does not check the body checksum.
     pub fn read_exact(&self, position: u64, dest: &mut [u8]) -> Result<(), TlvcReadError>
-        where R: TlvcRead,
+    where
+        R: TlvcRead,
     {
-        let end = position.checked_add(u64::try_from(dest.len()).unwrap())
+        let end = position
+            .checked_add(u64::try_from(dest.len()).unwrap())
             .ok_or(TlvcReadError::Truncated)?;
         if end > self.len() {
             return Err(TlvcReadError::Truncated);
@@ -303,7 +316,8 @@ impl<R> ChunkHandle<R> {
     /// `read_as_chunks`. Note that this will (unavoidably) result in duplicate
     /// reads.
     pub fn read_as_chunks(&self) -> TlvcReader<R>
-        where R: TlvcRead,
+    where
+        R: TlvcRead,
     {
         TlvcReader {
             source: self.source.clone(),
@@ -318,14 +332,16 @@ impl<R> ChunkHandle<R> {
     /// The buffer will be filled with some portion of the data. Which portion
     /// is undefined. You should treat it as garbage after this returns.
     pub fn check_body_checksum(&self, buffer: &mut [u8]) -> Result<(), TlvcReadError>
-        where R: TlvcRead,
+    where
+        R: TlvcRead,
     {
         let c = begin_body_crc();
         let mut c = c.digest();
         let end = self.body_position + self.header.len.get() as u64;
         let mut pos = self.body_position;
         while pos != end {
-            let portion = usize::try_from(end - pos).unwrap_or(usize::MAX)
+            let portion = usize::try_from(end - pos)
+                .unwrap_or(usize::MAX)
                 .min(buffer.len());
             self.source.read_exact(pos, &mut buffer[..portion])?;
             c.update(&buffer[..portion]);
@@ -334,7 +350,8 @@ impl<R> ChunkHandle<R> {
 
         let computed_checksum = c.finalize();
         let mut stored_checksum = 0u32;
-        self.source.read_exact(round_up(end), stored_checksum.as_bytes_mut())?;
+        self.source
+            .read_exact(round_up(end), stored_checksum.as_bytes_mut())?;
 
         if computed_checksum != stored_checksum {
             Err(TlvcReadError::BodyCorrupt {
@@ -384,12 +401,7 @@ mod tests {
 
     // Chunk here is written as u32s for readability, will be converted to
     // appropriate endianness for tests.
-    static TEST_CHUNK_A: &[u32] = &[
-        pack_tag(*b"0x1d"),
-        0,
-        header_checksum(*b"0x1d", 0),
-        0,
-    ];
+    static TEST_CHUNK_A: &[u32] = &[pack_tag(*b"0x1d"), 0, header_checksum(*b"0x1d", 0), 0];
 
     fn test_chunk_a() -> TlvcReader<std::sync::Arc<[u8]>> {
         TlvcReader::begin(chunk_bytes(TEST_CHUNK_A)).unwrap()
@@ -404,14 +416,19 @@ mod tests {
         assert_eq!(h.len.get(), 0);
         assert_eq!(h.header_checksum.get(), h.compute_checksum());
 
-        assert_eq!(r.remaining(), (size_of::<ChunkHeader>() + size_of::<u32>()) as u64,
-            "read_header should not advance cursor");
+        assert_eq!(
+            r.remaining(),
+            (size_of::<ChunkHeader>() + size_of::<u32>()) as u64,
+            "read_header should not advance cursor"
+        );
     }
 
     #[test]
     fn next_a() {
         let mut r = test_chunk_a();
-        let c = r.next().expect("chunk should read successfully")
+        let c = r
+            .next()
+            .expect("chunk should read successfully")
             .expect("chunk should not be none");
 
         let h = c.header();
@@ -427,7 +444,9 @@ mod tests {
     #[test]
     fn read_as_chunks_a() {
         let mut r = test_chunk_a();
-        let c = r.next().expect("chunk should read successfully")
+        let c = r
+            .next()
+            .expect("chunk should read successfully")
             .expect("chunk should not be none");
 
         let mut r2 = c.read_as_chunks();
@@ -437,12 +456,15 @@ mod tests {
     #[test]
     fn read_body_a() {
         let mut r = test_chunk_a();
-        let c = r.next().expect("chunk should read successfully")
+        let c = r
+            .next()
+            .expect("chunk should read successfully")
             .expect("chunk should not be none");
 
         assert_eq!(c.len(), 0);
 
-        c.read_exact(0, &mut []).expect("zero-length read should succeed");
+        c.read_exact(0, &mut [])
+            .expect("zero-length read should succeed");
 
         match c.read_exact(1, &mut []) {
             Err(TlvcReadError::Truncated) => (),
@@ -463,11 +485,14 @@ mod tests {
     #[test]
     fn next_checksum_a() {
         let mut r = test_chunk_a();
-        let c = r.next().expect("chunk should read successfully")
+        let c = r
+            .next()
+            .expect("chunk should read successfully")
             .expect("chunk should not be none");
 
         let mut temp = [0; 512];
-        c.check_body_checksum(&mut temp).expect("body checksum should be valid");
+        c.check_body_checksum(&mut temp)
+            .expect("body checksum should be valid");
     }
 
     // This chunk has a data payload that is deliberately not a multiple of 4
@@ -494,7 +519,9 @@ mod tests {
     #[test]
     fn next_b() {
         let mut r = test_chunk_b();
-        let c = r.next().expect("chunk should read successfully")
+        let c = r
+            .next()
+            .expect("chunk should read successfully")
             .expect("chunk should not be none");
 
         let h = c.header();
@@ -504,9 +531,11 @@ mod tests {
 
         let mut msg = [0; 13];
 
-        c.check_body_checksum(&mut msg).expect("checksum should validate");
+        c.check_body_checksum(&mut msg)
+            .expect("checksum should validate");
 
-        c.read_exact(8, &mut msg).expect("should be able to read msg");
+        c.read_exact(8, &mut msg)
+            .expect("should be able to read msg");
         assert_eq!(msg, *b"hello, world!");
 
         drop(c);
