@@ -10,5 +10,4 @@ serde = {version = "1", features = ["derive"]}
 ron = "0.8"
 clap = {version = "3", features = ["derive"]}
 tlvc = {path = "../tlvc"}
-zerocopy = "0.6"
 tlvc-text = {path = "../text"}
