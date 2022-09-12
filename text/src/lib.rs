@@ -123,39 +123,87 @@ pub fn pack<'a>(pieces: impl IntoIterator<Item = &'a Piece>) -> Vec<u8> {
     out
 }
 
+pub fn dump<R>(mut src: tlvc::TlvcReader<R>) -> Vec<Piece>
+where
+    R: tlvc::TlvcRead,
+{
+    let mut pieces = vec![];
+    loop {
+        match src.next() {
+            Ok(Some(chunk)) => {
+                let mut tmp = [0; 512];
+                if chunk.check_body_checksum(&mut tmp).is_ok() {
+                    pieces.push(Piece::Chunk(
+                        Tag::new(chunk.header().tag),
+                        dump(chunk.read_as_chunks()),
+                    ));
+                } else {
+                    let bytes = remaining_bytes(
+                        src,
+                        chunk.header().total_len_in_bytes(),
+                    );
+                    if let Ok(s) = std::str::from_utf8(&bytes) {
+                        pieces.push(Piece::String(s.to_string()));
+                    } else {
+                        pieces.push(Piece::Bytes(bytes));
+                    }
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(_) => {
+                let bytes = remaining_bytes(src, 0);
+                if let Ok(s) = std::str::from_utf8(&bytes) {
+                    pieces.push(Piece::String(s.to_string()));
+                } else {
+                    pieces.push(Piece::Bytes(bytes));
+                }
+                break;
+            }
+        }
+    }
+    pieces
+}
+
+fn remaining_bytes<R>(src: tlvc::TlvcReader<R>, rewind: usize) -> Vec<u8>
+where
+    R: tlvc::TlvcRead,
+{
+    let (src, start, end) = src.into_inner();
+    let start = start as usize - rewind;
+    let mut bytes = vec![0; end as usize - start];
+    src.read_exact(start as u64, &mut bytes).unwrap();
+    bytes
+}
+
 #[test]
 fn pack_unpack() {
-    use tlvc::TlvcReader;
-    let t = load(
-        r#"
-            [
-                ("BARC", [
-                    ("FOOB", [[8, 6, 7, 5, 3, 0, 9]]),
-                    ("QUUX", []),
-                ]),
-            ]
-        "#
-        .as_bytes(),
-    )
-    .unwrap();
-    assert!(t.len() == 1);
-    assert_eq!(
-        t[0],
-        Piece::Chunk(
-            Tag(*b"BARC"),
-            vec![
-                Piece::Chunk(
-                    Tag(*b"FOOB"),
-                    vec![Piece::Bytes(vec![8, 6, 7, 5, 3, 0, 9])]
-                ),
-                Piece::Chunk(Tag(*b"QUUX"), vec![])
-            ]
-        )
+    // Here's what we're starting with
+    let value = Piece::Chunk(
+        Tag(*b"BARC"),
+        vec![
+            Piece::Chunk(
+                Tag(*b"FOOB"),
+                vec![Piece::Bytes(vec![8, 6, 7, 5, 3, 0, 9])],
+            ),
+            Piece::Chunk(Tag(*b"QUUX"), vec![]),
+        ],
     );
+    let mut text = vec![];
+    save(&mut text, &[value.clone()]).unwrap();
+
+    // Round-trip through RON
+    use tlvc::TlvcReader;
+    let t = load(text.as_slice()).unwrap();
+    assert!(t.len() == 1);
+    assert_eq!(t[0], value);
+
+    // Round-trip through Vec<u8>
     let data: Vec<u8> = pack(&t);
     let mut reader = TlvcReader::begin(data.as_slice()).unwrap();
     let mut buf = [0u8; 256];
 
+    // Manually check the output using a TlvcReader
     let barc_chunk = reader.next().unwrap().unwrap();
     barc_chunk.check_body_checksum(&mut buf).unwrap();
     assert_eq!(barc_chunk.header().tag, *b"BARC");
@@ -178,4 +226,10 @@ fn pack_unpack() {
 
     assert!(barc_reader.next().unwrap().is_none());
     assert!(reader.next().unwrap().is_none());
+
+    // Automatically compare the output using `dump`
+    let reader = TlvcReader::begin(data.as_slice()).unwrap();
+    let d = dump(reader);
+    assert_eq!(d.len(), 1);
+    assert_eq!(t[0], value);
 }
