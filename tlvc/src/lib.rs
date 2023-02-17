@@ -335,8 +335,7 @@ impl<R> ChunkHandle<R> {
     where
         R: TlvcRead,
     {
-        let c = begin_body_crc();
-        let mut c = c.digest();
+        let mut c = begin_body_crc();
         let end = self.body_position + self.header.len.get() as u64;
         let mut pos = self.body_position;
         while pos != end {
@@ -364,17 +363,18 @@ impl<R> ChunkHandle<R> {
     }
 }
 
-/// Produces a `crc::Crc` that implements the polynomial used for body contents
+pub static CRC: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
+
+/// Produces a `crc::Digest` that implements the polynomial used for body contents
 /// checksums.
-pub const fn begin_body_crc() -> crc::Crc<u32> {
-    crc::Crc::<u32>::new(&crc::CRC_32_ISCSI)
+pub fn begin_body_crc() -> crc::Digest<'static, u32> {
+    CRC.digest()
 }
 
 /// Utility for computing the body contents checksum for a block of data held
 /// entirely in RAM.
 pub fn compute_body_crc(data: &[u8]) -> u32 {
-    let c = begin_body_crc();
-    let mut c = c.digest();
+    let mut c = begin_body_crc();
     c.update(data);
     c.finalize()
 }
