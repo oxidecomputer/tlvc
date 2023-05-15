@@ -126,6 +126,7 @@ pub fn pack<'a>(pieces: impl IntoIterator<Item = &'a Piece>) -> Vec<u8> {
 pub fn dump<R>(mut src: tlvc::TlvcReader<R>) -> Vec<Piece>
 where
     R: tlvc::TlvcRead,
+    R::Error: core::fmt::Debug,
 {
     let mut pieces = vec![];
     loop {
@@ -168,6 +169,7 @@ where
 fn remaining_bytes<R>(src: tlvc::TlvcReader<R>, rewind: usize) -> Vec<u8>
 where
     R: tlvc::TlvcRead,
+    R::Error: core::fmt::Debug,
 {
     let (src, start, end) = src.into_inner();
     let start = start as usize - rewind;
