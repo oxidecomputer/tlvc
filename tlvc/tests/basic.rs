@@ -11,11 +11,13 @@ fn fixture(s: &str) -> Vec<u8> {
 }
 
 fn test_fixture_a() -> Vec<u8> {
-    fixture(r#"
+    fixture(
+        r#"
         [
             ("0x1d", [])
         ]
-    "#)
+    "#,
+    )
 }
 
 #[test]
@@ -28,6 +30,9 @@ fn read_header_a() {
     assert_eq!(h.len.get(), 0);
     assert_eq!(h.header_checksum.get(), h.compute_checksum());
 
-    assert_eq!(r.remaining(), (size_of::<ChunkHeader>() + size_of::<u32>()) as u64,
-    "read_header should not advance cursor");
+    assert_eq!(
+        r.remaining(),
+        (size_of::<ChunkHeader>() + size_of::<u32>()) as u64,
+        "read_header should not advance cursor"
+    );
 }

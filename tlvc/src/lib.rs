@@ -27,7 +27,9 @@ pub const fn header_checksum(tag: [u8; 4], len: u32) -> u32 {
 /// While the fields are expected to be 4-byte-aligned in the storage medium, we
 /// _don't_ require them to be aligned in local memory, so this uses the
 /// unaligned and explicitly little-endian version of `u32`.
-#[derive(Copy, Clone, Debug, Default, AsBytes, FromBytes, zerocopy::Unaligned)]
+#[derive(
+    Copy, Clone, Debug, Default, AsBytes, FromBytes, zerocopy::Unaligned,
+)]
 #[repr(C)]
 pub struct ChunkHeader {
     /// Identifier describing the chunk. Must be valid UTF-8.
@@ -61,17 +63,27 @@ impl ChunkHeader {
 /// implement `Clone`. The easiest way to do this is to implement `TlvcRead` for
 /// a _reference_ to the backing store, e.g. `&MyType`.
 pub trait TlvcRead: Clone {
-    fn extent(&self) -> Result<u64, TlvcReadError>;
-    fn read_exact(&self, offset: u64, dest: &mut [u8]) -> Result<(), TlvcReadError>;
+    type Error;
+    fn extent(&self) -> Result<u64, TlvcReadError<Self::Error>>;
+    fn read_exact(
+        &self,
+        offset: u64,
+        dest: &mut [u8],
+    ) -> Result<(), TlvcReadError<Self::Error>>;
 }
 
 /// Implementation of `TlvcRead` for a simple in-memory byte slice.
 impl TlvcRead for &'_ [u8] {
-    fn extent(&self) -> Result<u64, TlvcReadError> {
+    type Error = core::convert::Infallible;
+    fn extent(&self) -> Result<u64, TlvcReadError<Self::Error>> {
         Ok(u64::try_from(self.len()).unwrap())
     }
 
-    fn read_exact(&self, offset: u64, dest: &mut [u8]) -> Result<(), TlvcReadError> {
+    fn read_exact(
+        &self,
+        offset: u64,
+        dest: &mut [u8],
+    ) -> Result<(), TlvcReadError<Self::Error>> {
         let offset = usize::try_from(offset).unwrap();
         let end = offset.checked_add(dest.len()).unwrap();
         dest.copy_from_slice(&self[offset..end]);
@@ -83,18 +95,23 @@ impl TlvcRead for &'_ [u8] {
 /// instead of `Vec` because `Arc` can be cheaply (shallowly) cloned.
 #[cfg(any(feature = "alloc", test))]
 impl TlvcRead for std::sync::Arc<[u8]> {
-    fn extent(&self) -> Result<u64, TlvcReadError> {
+    type Error = core::convert::Infallible;
+    fn extent(&self) -> Result<u64, TlvcReadError<Self::Error>> {
         (&**self).extent()
     }
 
-    fn read_exact(&self, offset: u64, dest: &mut [u8]) -> Result<(), TlvcReadError> {
+    fn read_exact(
+        &self,
+        offset: u64,
+        dest: &mut [u8],
+    ) -> Result<(), TlvcReadError<Self::Error>> {
         (&**self).read_exact(offset, dest)
     }
 }
 
 /// Errors that can occur during the read process.
 #[derive(Copy, Clone, Debug)]
-pub enum TlvcReadError {
+pub enum TlvcReadError<E> {
     /// A header was found with the wrong checksum.
     HeaderCorrupt {
         stored_checksum: u32,
@@ -107,6 +124,8 @@ pub enum TlvcReadError {
     },
     /// A chunk would extend past the end of the medium.
     Truncated,
+    /// Failure during user-controlled operations
+    User(E),
 }
 
 /// Pulls data from a `TlvcRead` implementation and parses it as TLV-C.
@@ -120,7 +139,7 @@ pub struct TlvcReader<R> {
 impl<R: TlvcRead> TlvcReader<R> {
     /// Starts a reader at the beginning of `source` and covering the whole
     /// extent of the medium.
-    pub fn begin(source: R) -> Result<Self, TlvcReadError> {
+    pub fn begin(source: R) -> Result<Self, TlvcReadError<R::Error>> {
         let limit = source.extent()?;
         Ok(Self {
             source,
@@ -161,7 +180,9 @@ impl<R: TlvcRead> TlvcReader<R> {
     /// In the first case, and only the first case, this reader's position is
     /// bumped past the end of the successfully parsed chunk. This means the
     /// next call to `next` will attempt to return a different chunk.
-    pub fn next(&mut self) -> Result<Option<ChunkHandle<R>>, TlvcReadError> {
+    pub fn next(
+        &mut self,
+    ) -> Result<Option<ChunkHandle<R>>, TlvcReadError<R::Error>> {
         if self.position == self.limit {
             return Ok(None);
         }
@@ -191,7 +212,7 @@ impl<R: TlvcRead> TlvcReader<R> {
     /// chunk _body_ is within the backing store, or the body checksum.
     ///
     /// You almost certainly want to call `next` instead.
-    pub fn read_header(&self) -> Result<ChunkHeader, TlvcReadError> {
+    pub fn read_header(&self) -> Result<ChunkHeader, TlvcReadError<R::Error>> {
         // Check that our invariant is maintained.
         debug_assert!(self.is_word_aligned());
 
@@ -221,7 +242,7 @@ impl<R: TlvcRead> TlvcReader<R> {
         Ok(header)
     }
 
-    pub fn skip_chunk(&mut self) -> Result<(), TlvcReadError> {
+    pub fn skip_chunk(&mut self) -> Result<(), TlvcReadError<R::Error>> {
         let h = self.read_header()?;
 
         // Compute the overall size of the header, contents (rounded up for
@@ -291,7 +312,11 @@ impl<R> ChunkHandle<R> {
 
     /// Reads bytes from the chunk body without interpreting them. Note that
     /// this does not check the body checksum.
-    pub fn read_exact(&self, position: u64, dest: &mut [u8]) -> Result<(), TlvcReadError>
+    pub fn read_exact(
+        &self,
+        position: u64,
+        dest: &mut [u8],
+    ) -> Result<(), TlvcReadError<R::Error>>
     where
         R: TlvcRead,
     {
@@ -331,7 +356,10 @@ impl<R> ChunkHandle<R> {
     ///
     /// The buffer will be filled with some portion of the data. Which portion
     /// is undefined. You should treat it as garbage after this returns.
-    pub fn check_body_checksum(&self, buffer: &mut [u8]) -> Result<(), TlvcReadError>
+    pub fn check_body_checksum(
+        &self,
+        buffer: &mut [u8],
+    ) -> Result<(), TlvcReadError<R::Error>>
     where
         R: TlvcRead,
     {
@@ -401,7 +429,8 @@ mod tests {
 
     // Chunk here is written as u32s for readability, will be converted to
     // appropriate endianness for tests.
-    static TEST_CHUNK_A: &[u32] = &[pack_tag(*b"0x1d"), 0, header_checksum(*b"0x1d", 0), 0];
+    static TEST_CHUNK_A: &[u32] =
+        &[pack_tag(*b"0x1d"), 0, header_checksum(*b"0x1d", 0), 0];
 
     fn test_chunk_a() -> TlvcReader<std::sync::Arc<[u8]>> {
         TlvcReader::begin(chunk_bytes(TEST_CHUNK_A)).unwrap()
