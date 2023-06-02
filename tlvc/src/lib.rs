@@ -110,7 +110,7 @@ impl TlvcRead for std::sync::Arc<[u8]> {
 }
 
 /// Errors that can occur during the read process.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum TlvcReadError<E> {
     /// A header was found with the wrong checksum.
     HeaderCorrupt {
