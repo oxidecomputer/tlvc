@@ -7,7 +7,7 @@
 #![cfg_attr(not(test), no_std)]
 
 use core::mem::size_of;
-use zerocopy::{AsBytes, FromBytes};
+use zerocopy::{AsBytes, FromBytes, FromZeroes};
 
 /// Shorthand type for little-endian `u32` used in the chunk header.
 pub type U32LE = zerocopy::U32<byteorder::LittleEndian>;
@@ -28,7 +28,14 @@ pub const fn header_checksum(tag: [u8; 4], len: u32) -> u32 {
 /// _don't_ require them to be aligned in local memory, so this uses the
 /// unaligned and explicitly little-endian version of `u32`.
 #[derive(
-    Copy, Clone, Debug, Default, AsBytes, FromBytes, zerocopy::Unaligned,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    AsBytes,
+    FromZeroes,
+    FromBytes,
+    zerocopy::Unaligned,
 )]
 #[repr(C)]
 pub struct ChunkHeader {
