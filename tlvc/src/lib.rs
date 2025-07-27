@@ -349,7 +349,11 @@ impl<R> ChunkHandle<R> {
             return Err(TlvcReadError::Truncated);
         }
 
-        self.source.read_exact(self.body_position + position, dest)
+        let Some(offset) = self.body_position.checked_add(position) else {
+            return Err(TlvcReadError::Truncated);
+        };
+
+        self.source.read_exact(offset, dest)
     }
 
     /// Produces a `TlvcReader` that can be used to interpret this chunk's body
