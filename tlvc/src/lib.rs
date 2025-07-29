@@ -205,13 +205,16 @@ impl<R: TlvcRead> TlvcReader<R> {
         }
 
         let header = self.read_header()?;
-        // Note: this cannot wrap as read_header has checked it.
-        let body_position =
-            self.position.wrapping_add(size_of::<ChunkHeader>() as u64);
+        // SAFETY: read_header has performed checked_add on the same values and
+        // returned an Err(TlvcReadError::Truncated) if this did wrap.
+        let body_position = unsafe {
+            self.position.unchecked_add(size_of::<ChunkHeader>() as u64)
+        };
         // Note: this cannot wrap as adding 4 to a u32::MAX rounded up still
-        // fits nicely in a u64.
-        let body_and_checksum_len =
-            round_u32_up_to_u64(header.len.get()).wrapping_add(4);
+        // fits nicely in a u64. The compiler should remove this error branch.
+        let body_and_checksum_len = round_up_u32_to_u64(header.len.get())
+            .checked_add(4)
+            .ok_or(TlvcReadError::Truncated)?;
         let chunk_end = body_position
             .checked_add(body_and_checksum_len)
             .ok_or(TlvcReadError::Truncated)?;
@@ -271,9 +274,10 @@ impl<R: TlvcRead> TlvcReader<R> {
 
         // Compute the overall size of the contents (rounded up for alignment),
         // header, and the trailing checksum (which we're not going to check).
-        // Note: we cannot wrap here as we go from a u32 to a u64.
-        let size = round_u32_up_to_u64(h.len.get())
-            .wrapping_add((size_of::<ChunkHeader>() + size_of::<u32>()) as u64);
+        // Note: we cannot wrap here as we go from a u32 to a u64. The compiler
+        // should remove the panic here.
+        let size = round_up_u32_to_u64(h.len.get())
+            + (size_of::<ChunkHeader>() + size_of::<u32>()) as u64;
         // Bump our new position forward as long as it doesn't cross our limit.
         // This may leave us zero-length. That's ok.
         let p = self
@@ -394,29 +398,32 @@ impl<R> ChunkHandle<R> {
     {
         // Caclulate the body checksum.
         let mut c = begin_body_crc();
-        let end = self
-            .body_position
-            .checked_add(self.header.len.get() as u64)
+        let mut pos = usize::try_from(self.body_position)
+            .ok()
             .ok_or(TlvcReadError::Truncated)?;
-        let mut pos = self.body_position;
+        let contents_len = usize::try_from(self.header.len.get())
+            .ok()
+            .ok_or(TlvcReadError::Truncated)?;
+        let end = pos
+            .checked_add(contents_len)
+            .ok_or(TlvcReadError::Truncated)?;
+        let len = buffer.len();
         while pos < end {
-            let portion = usize::try_from(end.wrapping_sub(pos))
-                .unwrap_or(usize::MAX)
-                .min(buffer.len());
+            let portion = (end - pos).min(len);
             let buf = &mut buffer[..portion];
-            self.source.read_exact(pos, buf)?;
+            self.source.read_exact(
+                u64::try_from(pos).ok().ok_or(TlvcReadError::Truncated)?,
+                buf,
+            )?;
             c.update(buf);
-            // Note: this cannot wrap, as portion is necessarily less or equal
-            // to 'end - pos'; 'pos + >=(end - pos)' spells out '>=end', and
-            // end is above created from addition with pos without wrapping.
-            pos = pos.wrapping_add(u64::try_from(portion).unwrap());
+            pos += portion;
         }
         let computed_checksum = c.finalize();
 
         // Read the stored checksum at the end of the chunk and compare.
         let mut stored_checksum = 0u32;
         self.source.read_exact(
-            round_up(end).ok_or(TlvcReadError::Truncated)?,
+            round_up_usize_to_u64(end).ok_or(TlvcReadError::Truncated)?,
             stored_checksum.as_bytes_mut(),
         )?;
 
@@ -447,16 +454,19 @@ pub fn compute_body_crc(data: &[u8]) -> u32 {
     c.finalize()
 }
 
-fn round_up(x: u64) -> Option<u64> {
-    Some(x.checked_add(0b11)? & !0b11)
+#[inline(always)]
+fn round_up_u32_to_u64(x: u32) -> u64 {
+    (x as u64 + 0b11) & !0b11
 }
 
-fn round_u32_up_to_u64(x: u32) -> u64 {
-    (x as u64).wrapping_add(0b11) & !0b11
-}
-
+#[inline(always)]
 fn round_up_usize(x: usize) -> Option<usize> {
     Some(x.checked_add(0b11)? & !0b11)
+}
+
+#[inline(always)]
+fn round_up_usize_to_u64(x: usize) -> Option<u64> {
+    Some((u64::try_from(x).ok()?).checked_add(0b11)? & !0b11)
 }
 
 #[cfg(test)]
