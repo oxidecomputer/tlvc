@@ -423,7 +423,7 @@ impl<R> ChunkHandle<R> {
             let portion = (end - pos).min(len);
             let buf = &mut buffer[..portion];
             self.source.read_exact(
-                u64::try_from(pos).ok().ok_or(TlvcReadError::Truncated)?,
+                u64::try_from(pos).map_err(|_| TlvcReadError::Truncated)?,
                 buf,
             )?;
             c.update(buf);
