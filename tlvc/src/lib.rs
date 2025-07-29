@@ -352,8 +352,7 @@ impl<R> ChunkHandle<R> {
         let end = position
             .checked_add(
                 u64::try_from(dest.len())
-                    .ok()
-                    .ok_or(TlvcReadError::Truncated)?,
+                    .map_err(|_| TlvcReadError::Truncated)?,
             )
             .ok_or(TlvcReadError::Truncated)?;
         if end > self.len() {
