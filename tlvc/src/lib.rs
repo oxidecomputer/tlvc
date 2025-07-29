@@ -89,7 +89,7 @@ pub trait TlvcRead: Clone {
 impl TlvcRead for &'_ [u8] {
     type Error = core::convert::Infallible;
     fn extent(&self) -> Result<u64, TlvcReadError<Self::Error>> {
-        Ok(u64::try_from(self.len()).unwrap())
+        u64::try_from(self.len()).map_err(|_| TlvcReadError::Truncated)
     }
 
     fn read_exact(
@@ -97,12 +97,11 @@ impl TlvcRead for &'_ [u8] {
         offset: u64,
         dest: &mut [u8],
     ) -> Result<(), TlvcReadError<Self::Error>> {
-        let Ok(offset) = usize::try_from(offset) else {
-            return Err(TlvcReadError::Truncated);
-        };
-        let Some(end) = offset.checked_add(dest.len()) else {
-            return Err(TlvcReadError::Truncated);
-        };
+        let offset =
+            usize::try_from(offset).map_err(|_| TlvcReadError::Truncated)?;
+        let end = offset
+            .checked_add(dest.len())
+            .ok_or(TlvcReadError::Truncated)?;
         dest.copy_from_slice(&self[offset..end]);
         Ok(())
     }
@@ -212,9 +211,9 @@ impl<R: TlvcRead> TlvcReader<R> {
         };
         // Note: this cannot overflow as we go from a u32 to a u64, and the
         // compiler sees it too and removes the panic branch here.
-        let body_and_checksum_len = round_up_u32_to_u64(header.len.get()) + 4;
+        let body_and_checksum_size = round_up_u32_to_u64(header.len.get()) + 4;
         let chunk_end = body_position
-            .checked_add(body_and_checksum_len)
+            .checked_add(body_and_checksum_size)
             .ok_or(TlvcReadError::Truncated)?;
 
         if chunk_end > self.limit {
@@ -274,20 +273,20 @@ impl<R: TlvcRead> TlvcReader<R> {
         // header, and the trailing checksum (which we're not going to check).
         // Note: this cannot overflow as we go from a u32 to a u64, and the
         // compiler sees it too and removes the panic branch here.
-        let size = round_up_u32_to_u64(h.len.get())
+        let chunk_size = round_up_u32_to_u64(h.len.get())
             + (size_of::<ChunkHeader>() + size_of::<u32>()) as u64;
         // Bump our new position forward as long as it doesn't cross our limit.
         // This may leave us zero-length. That's ok.
-        let p = self
+        let chunk_end = self
             .position
-            .checked_add(size)
+            .checked_add(chunk_size)
             .ok_or(TlvcReadError::Truncated)?;
 
-        if p > self.limit {
+        if chunk_end > self.limit {
             return Err(TlvcReadError::Truncated);
         }
 
-        self.position = p;
+        self.position = chunk_end;
         Ok(())
     }
 
@@ -345,15 +344,20 @@ impl<R> ChunkHandle<R> {
         R: TlvcRead,
     {
         let end = position
-            .checked_add(u64::try_from(dest.len()).unwrap())
+            .checked_add(
+                u64::try_from(dest.len())
+                    .ok()
+                    .ok_or(TlvcReadError::Truncated)?,
+            )
             .ok_or(TlvcReadError::Truncated)?;
         if end > self.len() {
             return Err(TlvcReadError::Truncated);
         }
 
-        let Some(offset) = self.body_position.checked_add(position) else {
-            return Err(TlvcReadError::Truncated);
-        };
+        let offset = self
+            .body_position
+            .checked_add(position)
+            .ok_or(TlvcReadError::Truncated)?;
 
         self.source.read_exact(offset, dest)
     }
