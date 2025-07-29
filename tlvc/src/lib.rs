@@ -410,11 +410,9 @@ impl<R> ChunkHandle<R> {
         // Caclulate the body checksum.
         let mut c = begin_body_crc();
         let mut pos = usize::try_from(self.body_position)
-            .ok()
-            .ok_or(TlvcReadError::Truncated)?;
+            .map_err(|_| TlvcReadError::Truncated)?;
         let contents_len = usize::try_from(self.header.len.get())
-            .ok()
-            .ok_or(TlvcReadError::Truncated)?;
+            .map_err(|_| TlvcReadError::Truncated)?;
         let end = pos
             .checked_add(contents_len)
             .ok_or(TlvcReadError::Truncated)?;
