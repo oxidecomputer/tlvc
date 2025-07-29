@@ -212,6 +212,9 @@ impl<R: TlvcRead> TlvcReader<R> {
         // Note: this cannot overflow as we go from a u32 to a u64, and the
         // compiler sees it too and removes the panic branch here.
         let body_and_checksum_size = round_up_u32_to_u64(header.len.get()) + 4;
+        // Note: ChunkHandle::read_as_chunks assumes that this check is
+        // performed. Removing this would make the SAFETY comment there invalid
+        // and risk undefined behaviour.
         let chunk_end = body_position
             .checked_add(body_and_checksum_size)
             .ok_or(TlvcReadError::Truncated)?;
@@ -221,6 +224,9 @@ impl<R: TlvcRead> TlvcReader<R> {
         }
         self.position = chunk_end;
 
+        // Note: ChunkHandle::read_as_chunks assumes that this is the only
+        // code path creating handles, and that above
+        // body_position + header.len is checked to not overflow.
         Ok(Some(ChunkHandle {
             source: self.source.clone(),
             header,
@@ -379,10 +385,14 @@ impl<R> ChunkHandle<R> {
         TlvcReader {
             source: self.source.clone(),
             position: self.body_position,
-            limit: self
-                .body_position
-                .checked_add(u64::from(self.header.len.get()))
-                .unwrap(),
+            // SAFETY: creation of ChunkHandle in TlvcReader::next checks that
+            // body_position + header.len does not overflow. ChunkHandle has no
+            // '&mut self' methods and the fields are private, so this addition
+            // still cannot overflow.
+            limit: unsafe {
+                self.body_position
+                    .unchecked_add(u64::from(self.header.len.get()))
+            },
         }
     }
 
