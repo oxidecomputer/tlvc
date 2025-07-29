@@ -206,15 +206,13 @@ impl<R: TlvcRead> TlvcReader<R> {
 
         let header = self.read_header()?;
         // SAFETY: read_header has performed checked_add on the same values and
-        // returned an Err(TlvcReadError::Truncated) if this did wrap.
+        // returned an Err(TlvcReadError::Truncated) if this did overflow.
         let body_position = unsafe {
             self.position.unchecked_add(size_of::<ChunkHeader>() as u64)
         };
-        // Note: this cannot wrap as adding 4 to a u32::MAX rounded up still
-        // fits nicely in a u64. The compiler should remove this error branch.
-        let body_and_checksum_len = round_up_u32_to_u64(header.len.get())
-            .checked_add(4)
-            .ok_or(TlvcReadError::Truncated)?;
+        // Note: this cannot overflow as we go from a u32 to a u64, and the
+        // compiler sees it too and removes the panic branch here.
+        let body_and_checksum_len = round_up_u32_to_u64(header.len.get()) + 4;
         let chunk_end = body_position
             .checked_add(body_and_checksum_len)
             .ok_or(TlvcReadError::Truncated)?;
@@ -274,8 +272,8 @@ impl<R: TlvcRead> TlvcReader<R> {
 
         // Compute the overall size of the contents (rounded up for alignment),
         // header, and the trailing checksum (which we're not going to check).
-        // Note: we cannot wrap here as we go from a u32 to a u64. The compiler
-        // should remove the panic here.
+        // Note: this cannot overflow as we go from a u32 to a u64, and the
+        // compiler sees it too and removes the panic branch here.
         let size = round_up_u32_to_u64(h.len.get())
             + (size_of::<ChunkHeader>() + size_of::<u32>()) as u64;
         // Bump our new position forward as long as it doesn't cross our limit.
