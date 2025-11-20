@@ -329,6 +329,11 @@ impl<R> ChunkHandle<R> {
         &self.header
     }
 
+    /// Returns the body position of this chunk.
+    pub fn body_position(&self) -> u64 {
+        self.body_position
+    }
+
     /// Returns the length of the body in bytes.
     pub fn len(&self) -> u64 {
         u64::from(self.header.len.get())
