@@ -528,6 +528,7 @@ mod tests {
         assert_eq!(h.len.get(), 0);
         assert_eq!(h.header_checksum.get(), h.compute_checksum());
 
+        assert_eq!(r.position(), 0);
         assert_eq!(
             r.remaining(),
             (size_of::<ChunkHeader>() + size_of::<u32>()) as u64,
@@ -550,6 +551,11 @@ mod tests {
 
         drop(c);
 
+        assert_eq!(
+            r.position(),
+            (size_of::<ChunkHeader>() + size_of::<u32>()) as u64,
+            "skipping should advance the reader position"
+        );
         assert_eq!(r.remaining(), 0, "skipping chunk should exhaust reader");
     }
 
@@ -652,6 +658,11 @@ mod tests {
 
         drop(c);
 
+        assert_eq!(
+            r.position(),
+            40,
+            "skipping should advance the reader position"
+        );
         assert_eq!(r.remaining(), 0, "skipping chunk should exhaust reader");
     }
 }
