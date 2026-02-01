@@ -155,6 +155,7 @@ pub struct TlvcReader<R> {
 impl<R: TlvcRead> TlvcReader<R> {
     /// Starts a reader at the beginning of `source` and covering the whole
     /// extent of the medium.
+    #[inline]
     pub fn begin(source: R) -> Result<Self, TlvcReadError<R::Error>> {
         let limit = source.extent()?;
         Ok(Self {
@@ -165,8 +166,15 @@ impl<R: TlvcRead> TlvcReader<R> {
     }
 
     /// Returns the number of bytes remaining in this reader.
+    #[inline]
     pub fn remaining(&self) -> u64 {
         self.limit.saturating_sub(self.position)
+    }
+
+    /// Returns the current offset position of this reader.
+    #[inline]
+    pub fn position(&self) -> u64 {
+        self.position
     }
 
     /// Destroys this reader and returns the original `source`, the byte
@@ -174,6 +182,7 @@ impl<R: TlvcRead> TlvcReader<R> {
     /// offset of the reader's limit. (This will be the end of the medium for
     /// readers created directly from `source`, or a point within for
     /// sub-readers produced by `read_as_chunks`.)
+    #[inline]
     pub fn into_inner(self) -> (R, u64, u64) {
         (self.source, self.position, self.limit)
     }
@@ -296,6 +305,7 @@ impl<R: TlvcRead> TlvcReader<R> {
         Ok(())
     }
 
+    #[inline]
     fn is_word_aligned(&self) -> bool {
         self.position & 0b11 == 0
     }
@@ -325,21 +335,25 @@ pub struct ChunkHandle<R> {
 
 impl<R> ChunkHandle<R> {
     /// Returns a reference to the raw chunk header.
+    #[inline]
     pub fn header(&self) -> &ChunkHeader {
         &self.header
     }
 
     /// Returns the body position of this chunk.
+    #[inline]
     pub fn body_position(&self) -> u64 {
         self.body_position
     }
 
     /// Returns the length of the body in bytes.
+    #[inline]
     pub fn len(&self) -> u64 {
         u64::from(self.header.len.get())
     }
 
     /// Checks whether the body is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.header.len.get() == 0
     }
@@ -456,6 +470,7 @@ pub static CRC: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
 
 /// Produces a `crc::Digest` that implements the polynomial used for body contents
 /// checksums.
+#[inline]
 pub fn begin_body_crc() -> crc::Digest<'static, u32> {
     CRC.digest()
 }
