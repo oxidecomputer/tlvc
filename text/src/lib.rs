@@ -2,13 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use serde::{de::Error, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Error};
 use std::io;
-use zerocopy::AsBytes;
+use zerocopy::IntoBytes;
 
 pub fn load(input: impl io::Read) -> io::Result<Vec<Piece>> {
-    ron::de::from_reader(input)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    ron::de::from_reader(input).map_err(io::Error::other)
 }
 
 pub fn from_str(input: &str) -> ron::error::SpannedResult<Vec<Piece>> {
@@ -21,7 +20,7 @@ pub fn save(output: impl io::Write, pieces: &[Piece]) -> io::Result<()> {
         pieces,
         ron::ser::PrettyConfig::default(),
     )
-    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    .map_err(io::Error::other)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
@@ -192,7 +191,7 @@ fn pack_unpack() {
         ],
     );
     let mut text = vec![];
-    save(&mut text, &[value.clone()]).unwrap();
+    save(&mut text, std::slice::from_ref(&value)).unwrap();
 
     // Round-trip through RON
     use tlvc::TlvcReader;

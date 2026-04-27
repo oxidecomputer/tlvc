@@ -7,10 +7,13 @@
 #![cfg_attr(not(test), no_std)]
 
 use core::mem::size_of;
-use zerocopy::{AsBytes, FromBytes};
+use zerocopy::IntoBytes;
+use zerocopy_derive::{
+    FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned,
+};
 
 /// Shorthand type for little-endian `u32` used in the chunk header.
-pub type U32LE = zerocopy::U32<byteorder::LittleEndian>;
+pub type U32LE = zerocopy::U32<zerocopy::byteorder::LittleEndian>;
 
 /// Magic number used to compute the header checksum.
 pub const HEADER_MAGIC: u32 = 0x6b32_9f69;
@@ -28,7 +31,15 @@ pub const fn header_checksum(tag: [u8; 4], len: u32) -> u32 {
 /// _don't_ require them to be aligned in local memory, so this uses the
 /// unaligned and explicitly little-endian version of `u32`.
 #[derive(
-    Copy, Clone, Debug, Default, AsBytes, FromBytes, zerocopy::Unaligned,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    IntoBytes,
+    FromBytes,
+    Immutable,
+    KnownLayout,
+    Unaligned,
 )]
 #[repr(C)]
 pub struct ChunkHeader {
@@ -180,6 +191,7 @@ impl<R: TlvcRead> TlvcReader<R> {
     /// In the first case, and only the first case, this reader's position is
     /// bumped past the end of the successfully parsed chunk. This means the
     /// next call to `next` will attempt to return a different chunk.
+    #[expect(clippy::should_implement_trait)]
     pub fn next(
         &mut self,
     ) -> Result<Option<ChunkHandle<R>>, TlvcReadError<R::Error>> {
@@ -228,7 +240,7 @@ impl<R: TlvcRead> TlvcReader<R> {
         // Great! Read the actual bytes.
         let mut header = ChunkHeader::default();
         self.source
-            .read_exact(self.position, header.as_bytes_mut())?;
+            .read_exact(self.position, header.as_mut_bytes())?;
 
         // Finally, check the header's local checksum to try and distinguish
         // this from total nonsense.
@@ -378,7 +390,7 @@ impl<R> ChunkHandle<R> {
         let computed_checksum = c.finalize();
         let mut stored_checksum = 0u32;
         self.source
-            .read_exact(round_up(end), stored_checksum.as_bytes_mut())?;
+            .read_exact(round_up(end), stored_checksum.as_mut_bytes())?;
 
         if computed_checksum != stored_checksum {
             Err(TlvcReadError::BodyCorrupt {
