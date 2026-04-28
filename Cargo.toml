@@ -3,7 +3,7 @@ members = ["tlvc", "tool", "text"]
 resolver = "3"
 
 [workspace.dependencies]
-clap            = { version = "3", features = ["derive"] }
+clap            = { version = "4", features = ["derive"] }
 crc             = { version = "3.4" }
 ron             = { version = "0.8" }
 serde           = { version = "1", features = ["derive"] }

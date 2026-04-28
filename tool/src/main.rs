@@ -18,7 +18,7 @@ enum Cmd {
 }
 
 fn main() {
-    let args = Tool::from_args();
+    let args = Tool::parse();
     match args.cmd {
         Cmd::Pack { input, output } => {
             let p =
