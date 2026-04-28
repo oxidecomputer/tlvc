@@ -7,7 +7,7 @@
 #![cfg_attr(not(test), no_std)]
 
 use core::mem::size_of;
-use zerocopy::IntoBytes;
+use zerocopy::IntoBytes as _;
 use zerocopy_derive::{
     FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned,
 };
