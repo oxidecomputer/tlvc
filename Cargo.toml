@@ -7,5 +7,6 @@ clap            = { version = "4", features = ["derive"] }
 crc             = { version = "3.4" }
 ron             = { version = "0.8" }
 serde           = { version = "1", features = ["derive"] }
+thiserror       = { version = "2" }
 zerocopy        = { version = "0.8" }
 zerocopy-derive = { version = "0.8" }

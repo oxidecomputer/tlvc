@@ -121,22 +121,32 @@ impl TlvcRead for std::sync::Arc<[u8]> {
 }
 
 /// Errors that can occur during the read process.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum TlvcReadError<E> {
     /// A header was found with the wrong checksum.
+    #[error(
+        "header checksum mismatch: stored {stored_checksum:#010x}, \
+         computed {computed_checksum:#010x}"
+    )]
     HeaderCorrupt {
         stored_checksum: u32,
         computed_checksum: u32,
     },
     /// A chunk body didn't match its checksum.
+    #[error(
+        "body checksum mismatch: stored {stored_checksum:#010x}, \
+         computed {computed_checksum:#010x}"
+    )]
     BodyCorrupt {
         stored_checksum: u32,
         computed_checksum: u32,
     },
     /// A chunk would extend past the end of the medium.
+    #[error("chunk extends past the end of the medium")]
     Truncated,
     /// Failure during user-controlled operations
-    User(E),
+    #[error("error during user-controlled operation")]
+    User(#[from] E),
 }
 
 /// Pulls data from a `TlvcRead` implementation and parses it as TLV-C.
