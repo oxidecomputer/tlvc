@@ -1,10 +1,11 @@
 [package]
 name = "tlvc"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 
 [dependencies]
 crc.workspace               = true
+thiserror.workspace         = true
 zerocopy.workspace          = true
 zerocopy-derive.workspace   = true
 
